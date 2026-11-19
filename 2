@@ -1,0 +1,1880 @@
+--[[
+    Guest Duels — Midnight Glass Edition
+    Single-file Roblox UI framework + movement/combat utility suite.
+    Namespace: GD_
+]]
+
+TweenService       = game:GetService("TweenService")
+RunService         = game:GetService("RunService")
+Players            = game:GetService("Players")
+UserInputService   = game:GetService("UserInputService")
+HttpService        = game:GetService("HttpService")
+Lighting           = game:GetService("Lighting")
+Workspace          = game:GetService("Workspace")
+ReplicatedStorage  = game:GetService("ReplicatedStorage")
+
+LP         = Players.LocalPlayer
+PlayerGui  = LP:WaitForChild("PlayerGui")
+
+-- ============================================================
+-- THEME : MIDNIGHT GLASS
+-- ============================================================
+THEME = {
+    Base       = Color3.fromRGB(10, 14, 26),    -- #0A0E1A
+    Panel      = Color3.fromRGB(17, 24, 39),    -- #111827
+    PanelTop   = Color3.fromRGB(30, 41, 64),
+    PanelBot   = Color3.fromRGB(8, 11, 21),
+    Raised     = Color3.fromRGB(23, 32, 52),
+    Border     = Color3.fromRGB(124, 158, 255), -- #7C9EFF
+    BorderSoft = Color3.fromRGB(167, 139, 250), -- #A78BFA
+    Accent     = Color3.fromRGB(124, 158, 255),
+    Accent2    = Color3.fromRGB(167, 139, 250),
+    Highlight  = Color3.fromRGB(34, 211, 238),  -- #22D3EE
+    Text       = Color3.fromRGB(226, 232, 240),
+    TextDim    = Color3.fromRGB(148, 163, 184),
+    Success    = Color3.fromRGB(52, 211, 153),
+    Danger     = Color3.fromRGB(248, 113, 113),
+    GlassTrans = 0.62,
+    StrokeTrans= 0.18,
+}
+
+-- ============================================================
+-- CONFIG
+-- ============================================================
+CONFIG_FILE = "GuestDuels_Config.json"
+MOB_POS_FILE = "GuestDuels_MobPos.json"
+
+Config = {
+    NormalSpeed = 59, CarrySpeed = 29, AutoCarrySpeed = false,
+    LaggerSpeed = 40, LaggerCarry = 20,
+    CarrySpeedKey = "C", LaggerKey = "X",
+    TPDownKey = "E", DropKey = "F", InstaResetKey = "G",
+    TPDownGamepadKey = "ButtonY", DropGamepadKey = "ButtonX", InstaResetGamepadKey = "ButtonB",
+    AutoTPDown = false, TPDownHeight = 20,
+    AutoLeft = false, AutoRight = false,
+    AutoLeftKey = "A", AutoRightKey = "D",
+    AutoPlayMode = "1 Btn", AutoPlayKey = "P",
+    InfiniteJump = false, InfJumpMode = "Hold",
+    AntiRagdoll = false, AntiRagdollMode = "V1",
+    BatCounter = false, MedusaCounter = false,
+    AntiDie = false, Spin = false, SafeMode = false,
+    UIScale = 30, LockUI = false, HideUI = false, HideUIKey = "RightControl",
+    MobileButtonSize = 50, StealBarSize = 40, CircleButtons = false, HideButtons = false,
+    PlayerESP = false, PlayerTracers = false, RagdollCountdown = false,
+    BrainrotTransparencyBase = false, BrainrotTransparencyHeld = false,
+    CustomSky = false, CustomSkyTheme = "Off",
+    CustomAnim = false, Unwalk = false, AnimPack = "Bubbly",
+    BatSkin = "Katana", Headless = false, Korblox = false,
+    AntiLag = false, StretchRes = false, FOVChange = false, FOVValue = 70,
+    BatAimbot = false, BatAimbotKey = "H", AimbotSpeed = 55,
+    AutoSwing = true, AutoBrainrot = false, MirrorTPDown = false, NoCamCollision = true,
+    AutoSteal = false, AutoStealMode = "Normal", AutoStealVersion = "V1",
+    AutoStealStopAt = 75, AutoStealStopWhenHit = false, AutoStealHitPauseSeconds = 1.3,
+    AutoStealRadiusNormal = 61, AutoStealRadiusSemi = 9, AutoStealRadius = 61,
+    StealBarPosX = nil, StealBarPosY = nil,
+}
+
+DEFAULT_KEYS = {
+    CarrySpeedKey="C", LaggerKey="X", TPDownKey="E", DropKey="F", InstaResetKey="G",
+    TPDownGamepadKey="ButtonY", DropGamepadKey="ButtonX", InstaResetGamepadKey="ButtonB",
+    AutoLeftKey="A", AutoRightKey="D", AutoPlayKey="P", BatAimbotKey="H", HideUIKey="RightControl",
+}
+
+function GD_SaveConfig()
+    pcall(function()
+        if writefile then writefile(CONFIG_FILE, HttpService:JSONEncode(Config)) end
+    end)
+end
+function GD_LoadConfig()
+    pcall(function()
+        if readfile and isfile and isfile(CONFIG_FILE) then
+            local d = HttpService:JSONDecode(readfile(CONFIG_FILE))
+            for k, v in pairs(d) do if Config[k] ~= nil then Config[k] = v end end
+        end
+    end)
+    for k, v in pairs(DEFAULT_KEYS) do
+        if type(Config[k]) ~= "string" or Config[k] == "" then Config[k] = v end
+    end
+    Config.LockUI = false
+end
+GD_LoadConfig()
+
+-- Runtime state
+State = { autoBatToggled = false }
+dropActive = false
+carrySpeedEnabled = false
+laggerModeEnabled = false
+laggerSpeedEnabled = false
+laggerCarryEnabled = false
+autoCarryBoost = false
+mobBtnRefs = {}
+pages = {}
+tabButtons = {}
+currentTab = "Movement"
+keybindCaptureActive = false
+order = 0
+function GD_NextOrder() order = order + 1; return order end
+
+-- ============================================================
+-- PRIMITIVES
+-- ============================================================
+function GD_Corner(parent, radius)
+    local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, radius or 8); c.Parent = parent; return c
+end
+function GD_Stroke(parent, thickness, color, transparency)
+    local s = Instance.new("UIStroke")
+    s.Thickness = thickness or 1
+    s.Color = color or THEME.Border
+    s.Transparency = transparency or THEME.StrokeTrans
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    s.Parent = parent
+    s:SetAttribute("GD_ThemeStroke", true)
+    return s
+end
+function GD_Padding(parent, l, r, t, b)
+    local p = Instance.new("UIPadding")
+    p.PaddingLeft = UDim.new(0, l or 0); p.PaddingRight = UDim.new(0, r or 0)
+    p.PaddingTop = UDim.new(0, t or 0);  p.PaddingBottom = UDim.new(0, b or 0)
+    p.Parent = parent; return p
+end
+function GD_GlassGradient(parent)
+    local g = Instance.new("UIGradient")
+    g.Rotation = 90
+    g.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, THEME.PanelTop),
+        ColorSequenceKeypoint.new(1, THEME.PanelBot),
+    })
+    g.Parent = parent
+    return g
+end
+function GD_ApplyGlassStyle(frame, radius, transparency)
+    frame.BackgroundColor3 = THEME.Panel
+    frame.BackgroundTransparency = transparency or THEME.GlassTrans
+    frame.BorderSizePixel = 0
+    GD_Corner(frame, radius or 12)
+    GD_GlassGradient(frame)
+    GD_Stroke(frame, 1, THEME.Border, THEME.StrokeTrans)
+end
+
+-- ============================================================
+-- THEME REFRESH (targeted, no full-descendant scan spam)
+-- ============================================================
+function GD_RefreshTheme()
+    for _, obj in ipairs(PlayerGui:GetDescendants()) do
+        if obj:IsA("UIStroke") and obj:GetAttribute("GD_ThemeStroke") then
+            obj.Color = THEME.Border
+        end
+    end
+end
+
+-- ============================================================
+-- ROOT UI
+-- ============================================================
+local oldGui = PlayerGui:FindFirstChild("GuestDuelsUI")
+if oldGui then oldGui:Destroy() end
+
+screenGui = Instance.new("ScreenGui")
+screenGui.Name = "GuestDuelsUI"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.DisplayOrder = 100
+screenGui.Parent = PlayerGui
+
+-- 360x480 tight window
+MAIN_W, MAIN_H = 360, 480
+main = Instance.new("Frame")
+main.Name = "Main"
+main.Size = UDim2.fromOffset(MAIN_W, MAIN_H)
+main.AnchorPoint = Vector2.new(0.5, 0.5)
+main.Position = UDim2.new(0.5, 0, 0.5, 0)
+main.BackgroundTransparency = 0.55
+main.BackgroundColor3 = THEME.Base
+main.BorderSizePixel = 0
+main.Active = true
+main.Draggable = false
+main.ClipsDescendants = true
+main.Parent = screenGui
+GD_Corner(main, 16)
+GD_Stroke(main, 1.2, THEME.Border, 0.1)
+do
+    local g = Instance.new("UIGradient")
+    g.Rotation = 90
+    g.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, THEME.PanelTop),
+        ColorSequenceKeypoint.new(0.5, THEME.Panel),
+        ColorSequenceKeypoint.new(1, THEME.PanelBot),
+    })
+    g.Parent = main
+end
+
+-- inner glass highlight (top strip)
+local glassHighlight = Instance.new("Frame")
+glassHighlight.Name = "GlassHighlight"
+glassHighlight.Size = UDim2.new(1, -24, 0, 1)
+glassHighlight.Position = UDim2.new(0, 12, 0, 1)
+glassHighlight.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+glassHighlight.BackgroundTransparency = 0.72
+glassHighlight.BorderSizePixel = 0
+glassHighlight.ZIndex = 2
+glassHighlight.Parent = main
+GD_Corner(glassHighlight, 1)
+
+-- scale
+uiScaleObj = Instance.new("UIScale")
+uiScaleObj.Parent = main
+function GD_GetBaseScale()
+    return math.clamp((tonumber(Config.UIScale) or 30) / 40, 0.2, 2)
+end
+uiScaleObj.Scale = GD_GetBaseScale()
+
+-- ============================================================
+-- TOP BAR
+-- ============================================================
+topBar = Instance.new("Frame")
+topBar.Name = "TopBar"
+topBar.Size = UDim2.new(1, 0, 0, 40)
+topBar.Position = UDim2.new(0, 0, 0, 0)
+topBar.BackgroundTransparency = 1
+topBar.ZIndex = 3
+topBar.Parent = main
+
+brandDot = Instance.new("Frame")
+brandDot.Size = UDim2.fromOffset(6, 6)
+brandDot.Position = UDim2.new(0, 14, 0.5, -3)
+brandDot.BackgroundColor3 = THEME.Accent
+brandDot.BorderSizePixel = 0
+brandDot.ZIndex = 4
+brandDot.Parent = topBar
+GD_Corner(brandDot, 3)
+
+brandLabel = Instance.new("TextLabel")
+brandLabel.Size = UDim2.new(1, -100, 1, 0)
+brandLabel.Position = UDim2.new(0, 26, 0, 0)
+brandLabel.BackgroundTransparency = 1
+brandLabel.Text = "GUEST DUELS"
+brandLabel.Font = Enum.Font.GothamBold
+brandLabel.TextSize = 13
+brandLabel.TextColor3 = THEME.Text
+brandLabel.TextXAlignment = Enum.TextXAlignment.Left
+brandLabel.ZIndex = 4
+brandLabel.Parent = topBar
+
+-- minimize button
+minBtn = Instance.new("TextButton")
+minBtn.Size = UDim2.fromOffset(24, 24)
+minBtn.Position = UDim2.new(1, -56, 0.5, -12)
+minBtn.BackgroundColor3 = THEME.Raised
+minBtn.BackgroundTransparency = 0.4
+minBtn.BorderSizePixel = 0
+minBtn.Text = "—"
+minBtn.Font = Enum.Font.GothamBold
+minBtn.TextSize = 14
+minBtn.TextColor3 = THEME.Text
+minBtn.AutoButtonColor = false
+minBtn.ZIndex = 4
+minBtn.Parent = topBar
+GD_Corner(minBtn, 6)
+GD_Stroke(minBtn, 1, THEME.BorderSoft, 0.3)
+
+-- close button
+closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.fromOffset(24, 24)
+closeBtn.Position = UDim2.new(1, -28, 0.5, -12)
+closeBtn.BackgroundColor3 = THEME.Raised
+closeBtn.BackgroundTransparency = 0.4
+closeBtn.BorderSizePixel = 0
+closeBtn.Text = "×"
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 16
+closeBtn.TextColor3 = THEME.Text
+closeBtn.AutoButtonColor = false
+closeBtn.ZIndex = 4
+closeBtn.Parent = topBar
+GD_Corner(closeBtn, 6)
+GD_Stroke(closeBtn, 1, THEME.Danger, 0.35)
+
+-- drag
+do
+    local dragging, dragStart, startPos
+    topBar.InputBegan:Connect(function(input)
+        if Config.LockUI then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; dragStart = input.Position; startPos = main.Position
+        end
+    end)
+    topBar.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch then
+            if dragging and dragStart and startPos then
+                local d = input.Position - dragStart
+                main.Position = UDim2.new(
+                    startPos.X.Scale, startPos.X.Offset + d.X,
+                    startPos.Y.Scale, startPos.Y.Offset + d.Y)
+            end
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false; dragStart = nil
+        end
+    end)
+end
+
+-- collapsed pill (shown when minimized)
+collapsedPill = Instance.new("TextButton")
+collapsedPill.Size = UDim2.fromOffset(120, 34)
+collapsedPill.Position = UDim2.new(0, 12, 0, 12)
+collapsedPill.BackgroundColor3 = THEME.Panel
+collapsedPill.BackgroundTransparency = 0.35
+collapsedPill.BorderSizePixel = 0
+collapsedPill.Text = "◆ GUEST DUELS"
+collapsedPill.Font = Enum.Font.GothamBold
+collapsedPill.TextSize = 11
+collapsedPill.TextColor3 = THEME.Text
+collapsedPill.AutoButtonColor = false
+collapsedPill.Visible = false
+collapsedPill.Parent = screenGui
+GD_Corner(collapsedPill, 10)
+GD_Stroke(collapsedPill, 1.2, THEME.Border, 0.15)
+
+function GD_Minimize()
+    Config.HideUI = true
+    main.Visible = false
+    collapsedPill.Visible = true
+end
+function GD_Restore()
+    Config.HideUI = false
+    main.Visible = true
+    collapsedPill.Visible = false
+end
+minBtn.Activated:Connect(GD_Minimize)
+collapsedPill.Activated:Connect(GD_Restore)
+closeBtn.Activated:Connect(function()
+    -- reset to defaults
+    Config.LockUI = false
+    GD_SaveConfig()
+    screenGui:Destroy()
+end)
+
+-- ============================================================
+-- LEFT TAB RAIL
+-- ============================================================
+TAB_NAMES = {"Movement", "Combat", "Misc", "Visual", "Settings"}
+RAIL_W = 52
+
+rail = Instance.new("Frame")
+rail.Name = "Rail"
+rail.Size = UDim2.new(0, RAIL_W, 1, -96)
+rail.Position = UDim2.new(0, 8, 0, 48)
+rail.BackgroundColor3 = THEME.Base
+rail.BackgroundTransparency = 0.6
+rail.BorderSizePixel = 0
+rail.Parent = main
+GD_Corner(rail, 10)
+GD_Stroke(rail, 1, THEME.BorderSoft, 0.35)
+GD_Padding(rail, 4, 4, 6, 6)
+
+railLayout = Instance.new("UIListLayout")
+railLayout.SortOrder = Enum.SortOrder.LayoutOrder
+railLayout.Padding = UDim.new(0, 4)
+railLayout.Parent = rail
+
+-- content
+content = Instance.new("ScrollingFrame")
+content.Name = "Content"
+content.Size = UDim2.new(1, -(RAIL_W + 24), 1, -96)
+content.Position = UDim2.new(0, RAIL_W + 16, 0, 48)
+content.BackgroundTransparency = 1
+content.BorderSizePixel = 0
+content.ScrollBarThickness = 2
+content.ScrollBarImageColor3 = THEME.Border
+content.ScrollBarImageTransparency = 0.4
+content.CanvasSize = UDim2.new(0, 0, 0, 0)
+content.AutomaticCanvasSize = Enum.AutomaticSize.Y
+content.Parent = main
+
+contentLayout = Instance.new("UIListLayout")
+contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
+contentLayout.Padding = UDim.new(0, 8)
+contentLayout.Parent = content
+
+-- footer strip
+footer = Instance.new("Frame")
+footer.Size = UDim2.new(1, -16, 0, 22)
+footer.Position = UDim2.new(0, 8, 1, -30)
+footer.BackgroundTransparency = 1
+footer.Parent = main
+footerLabel = Instance.new("TextLabel")
+footerLabel.Size = UDim2.new(1, 0, 1, 0)
+footerLabel.BackgroundTransparency = 1
+footerLabel.Text = "Guest Duels • Midnight Glass"
+footerLabel.Font = Enum.Font.GothamMedium
+footerLabel.TextSize = 10
+footerLabel.TextColor3 = THEME.TextDim
+footerLabel.TextXAlignment = Enum.TextXAlignment.Center
+footerLabel.Parent = footer
+
+-- ============================================================
+-- UI BUILDERS
+-- ============================================================
+function GD_MakePage(name)
+    local p = Instance.new("Frame")
+    p.Name = name
+    p.Size = UDim2.new(1, 0, 0, 0)
+    p.AutomaticSize = Enum.AutomaticSize.Y
+    p.BackgroundTransparency = 1
+    p.Visible = false
+    p.Parent = content
+    local l = Instance.new("UIListLayout")
+    l.SortOrder = Enum.SortOrder.LayoutOrder
+    l.Padding = UDim.new(0, 8)
+    l.Parent = p
+    pages[name] = p
+    return p
+end
+for _, n in ipairs(TAB_NAMES) do GD_MakePage(n) end
+pages.Movement.Visible = true
+
+function GD_SectionLabel(parent, text)
+    local w = Instance.new("Frame")
+    w.Size = UDim2.new(1, 0, 0, 18)
+    w.BackgroundTransparency = 1
+    w.LayoutOrder = GD_NextOrder()
+    w.Parent = parent
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, 0, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = string.upper(text)
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextSize = 10
+    lbl.TextColor3 = THEME.Highlight
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = w
+    return lbl
+end
+
+function GD_Row(parent, labelText)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 36)
+    row.BackgroundColor3 = THEME.Panel
+    row.BackgroundTransparency = 0.5
+    row.BorderSizePixel = 0
+    row.LayoutOrder = GD_NextOrder()
+    row.Parent = parent
+    GD_Corner(row, 9)
+    GD_GlassGradient(row)
+    local st = GD_Stroke(row, 1, THEME.Border, 0.4)
+    st.Name = "RowStroke"
+    local lbl = Instance.new("TextLabel")
+    lbl.Text = labelText
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.TextSize = 12
+    lbl.TextColor3 = THEME.Text
+    lbl.BackgroundTransparency = 1
+    lbl.Size = UDim2.new(0.55, 0, 1, 0)
+    lbl.Position = UDim2.new(0, 10, 0, 0)
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = row
+    return row
+end
+
+function GD_SetRowGlow(row, on)
+    if not row then return end
+    local st = row:FindFirstChild("RowStroke") or row:FindFirstChildOfClass("UIStroke")
+    if not st then return end
+    local info = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    if on then
+        TweenService:Create(st, info, { Transparency = 0.05, Thickness = 1.8, Color = THEME.Accent }):Play()
+        TweenService:Create(row, info, { BackgroundColor3 = THEME.Raised, BackgroundTransparency = 0.3 }):Play()
+    else
+        TweenService:Create(st, info, { Transparency = 0.4, Thickness = 1, Color = THEME.Border }):Play()
+        TweenService:Create(row, info, { BackgroundColor3 = THEME.Panel, BackgroundTransparency = 0.5 }):Play()
+    end
+end
+
+function GD_KeybindBadge(parent, initial, offsetX, width, onChanged)
+    local btn = Instance.new("TextButton")
+    btn.Text = tostring(initial or "None")
+    btn.Font = Enum.Font.GothamMedium
+    btn.TextSize = 10
+    btn.TextColor3 = THEME.Text
+    btn.BackgroundColor3 = THEME.Raised
+    btn.BackgroundTransparency = 0.35
+    btn.BorderSizePixel = 0
+    btn.Size = UDim2.fromOffset(width or 42, 22)
+    btn.Position = UDim2.new(1, offsetX, 0.5, -11)
+    btn.AutoButtonColor = false
+    btn.Parent = parent
+    GD_Corner(btn, 6)
+    GD_Stroke(btn, 1, THEME.BorderSoft, 0.35)
+    local listening = false
+    local current = tostring(initial or "None")
+    btn.Activated:Connect(function()
+        if listening then return end
+        listening = true
+        keybindCaptureActive = true
+        btn.Text = "…"
+        local conn
+        conn = UserInputService.InputBegan:Connect(function(input)
+            local kb = input.UserInputType == Enum.UserInputType.Keyboard
+            local gp = input.UserInputType.Name:match("^Gamepad%d+$") ~= nil
+            if not (kb or gp) then return end
+            current = (kb and input.KeyCode.Name == "Escape") and "None" or input.KeyCode.Name
+            btn.Text = current
+            if onChanged then onChanged(current) end
+            GD_SaveConfig()
+            listening = false
+            btn.Text = current
+            conn:Disconnect()
+            task.defer(function() keybindCaptureActive = false end)
+        end)
+    end)
+    return btn, function() return current end
+end
+
+function GD_FormatNum(n)
+    n = tonumber(n) or 0
+    if math.abs(n - math.floor(n + 1e-9)) < 1e-9 then return tostring(math.floor(n + 0.5)) end
+    return string.format("%.1f", n)
+end
+
+function GD_NumberBadge(parent, initial, offsetX, width, onChanged)
+    local btn = Instance.new("TextButton")
+    btn.Text = GD_FormatNum(initial)
+    btn.Font = Enum.Font.GothamMedium
+    btn.TextSize = 11
+    btn.TextColor3 = THEME.Text
+    btn.BackgroundColor3 = THEME.Raised
+    btn.BackgroundTransparency = 0.35
+    btn.BorderSizePixel = 0
+    btn.Size = UDim2.fromOffset(width or 40, 22)
+    btn.Position = UDim2.new(1, offsetX, 0.5, -11)
+    btn.AutoButtonColor = false
+    btn.Parent = parent
+    GD_Corner(btn, 6)
+    GD_Stroke(btn, 1, THEME.BorderSoft, 0.35)
+    local current = GD_FormatNum(initial)
+    btn.Activated:Connect(function()
+        local box = Instance.new("TextBox")
+        box.Text = current
+        box.Font = Enum.Font.GothamBold
+        box.TextSize = 11
+        box.TextColor3 = THEME.Text
+        box.BackgroundColor3 = THEME.Raised
+        box.BackgroundTransparency = 0.2
+        box.BorderSizePixel = 0
+        box.Size = btn.Size
+        box.Position = btn.Position
+        box.ClearTextOnFocus = false
+        box.TextXAlignment = Enum.TextXAlignment.Center
+        box.Parent = parent
+        GD_Corner(box, 6)
+        GD_Stroke(box, 1, THEME.Accent, 0.2)
+        btn.Visible = false
+        box:CaptureFocus()
+        box.CursorPosition = #box.Text + 1
+        box.FocusLost:Connect(function()
+            local num = tonumber((box.Text:gsub("%s+", ""):gsub(",", ".")))
+            if num then
+                num = math.floor(num * 10 + 0.5) / 10
+                current = GD_FormatNum(num)
+                if onChanged then onChanged(num) end
+                GD_SaveConfig()
+            end
+            btn.Text = current
+            box:Destroy()
+            btn.Visible = true
+        end)
+    end)
+    return btn, function() return tonumber(current) or 0 end, function(v)
+        current = GD_FormatNum(v); btn.Text = current
+    end
+end
+
+function GD_ToggleRow(parent, labelText, defaultOn, onToggle)
+    local row = GD_Row(parent, labelText)
+    local track = Instance.new("TextButton")
+    track.Text = ""
+    track.AutoButtonColor = false
+    track.Size = UDim2.fromOffset(38, 20)
+    track.Position = UDim2.new(1, -50, 0.5, -10)
+    track.BackgroundColor3 = THEME.Raised
+    track.BackgroundTransparency = 0.3
+    track.BorderSizePixel = 0
+    track.Parent = row
+    GD_Corner(track, 10)
+    local st = GD_Stroke(track, 1.4, THEME.BorderSoft, 0.3)
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.fromOffset(14, 14)
+    knob.Position = defaultOn and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7)
+    knob.BackgroundColor3 = THEME.Text
+    knob.BorderSizePixel = 0
+    knob.Parent = track
+    GD_Corner(knob, 7)
+    local on = defaultOn == true
+    local function setVisual(state)
+        on = state == true
+        local info = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        TweenService:Create(knob, info, {
+            Position = on and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7),
+        }):Play()
+        TweenService:Create(track, info, {
+            BackgroundColor3 = on and THEME.Accent or THEME.Raised,
+            BackgroundTransparency = on and 0.1 or 0.3,
+        }):Play()
+        TweenService:Create(st, info, {
+            Color = on and THEME.Accent or THEME.BorderSoft,
+            Transparency = on and 0 or 0.3,
+            Thickness = on and 1.8 or 1.4,
+        }):Play()
+        GD_SetRowGlow(row, on)
+    end
+    track.Activated:Connect(function()
+        setVisual(not on)
+        if onToggle then onToggle(on) end
+        GD_SaveConfig()
+    end)
+    return row, setVisual
+end
+
+function GD_ToggleKeybindRow(parent, labelText, defaultOn, initialKey, onToggle, onKeyChanged)
+    local row, setVis = GD_ToggleRow(parent, labelText, defaultOn, onToggle)
+    GD_KeybindBadge(row, initialKey, -100, 38, onKeyChanged)
+    return row, setVis
+end
+
+function GD_ToggleNumberRow(parent, labelText, defaultOn, initialVal, onToggle, onNumChange)
+    local row = GD_Row(parent, labelText)
+    local track = Instance.new("TextButton")
+    track.Text = ""
+    track.AutoButtonColor = false
+    track.Size = UDim2.fromOffset(38, 20)
+    track.Position = UDim2.new(1, -96, 0.5, -10)
+    track.BackgroundColor3 = THEME.Raised
+    track.BackgroundTransparency = 0.3
+    track.BorderSizePixel = 0
+    track.Parent = row
+    GD_Corner(track, 10)
+    local st = GD_Stroke(track, 1.4, THEME.BorderSoft, 0.3)
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.fromOffset(14, 14)
+    knob.Position = defaultOn and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7)
+    knob.BackgroundColor3 = THEME.Text
+    knob.BorderSizePixel = 0
+    knob.Parent = track
+    GD_Corner(knob, 7)
+    local on = defaultOn == true
+    track.Activated:Connect(function()
+        on = not on
+        local info = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        TweenService:Create(knob, info, { Position = on and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7) }):Play()
+        TweenService:Create(track, info, {
+            BackgroundColor3 = on and THEME.Accent or THEME.Raised,
+            BackgroundTransparency = on and 0.1 or 0.3,
+        }):Play()
+        TweenService:Create(st, info, { Color = on and THEME.Accent or THEME.BorderSoft, Transparency = on and 0 or 0.3 }):Play()
+        GD_SetRowGlow(row, on)
+        if onToggle then onToggle(on) end
+        GD_SaveConfig()
+    end)
+    GD_NumberBadge(row, initialVal, -52, 38, onNumChange)
+    return row
+end
+
+function GD_CycleRow(parent, labelText, options, currentValue, onChanged)
+    local row = GD_Row(parent, labelText)
+    local lbl = Instance.new("TextLabel")
+    lbl.BackgroundTransparency = 1
+    lbl.Size = UDim2.fromOffset(100, 20)
+    lbl.Position = UDim2.new(1, -134, 0.5, -10)
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextSize = 11
+    lbl.TextColor3 = THEME.Text
+    lbl.Text = tostring(currentValue)
+    lbl.TextXAlignment = Enum.TextXAlignment.Center
+    lbl.TextTruncate = Enum.TextTruncate.AtEnd
+    lbl.Parent = row
+    local idx = 1
+    for i, o in ipairs(options) do if o == currentValue then idx = i break end end
+    local function arrow(txt, x)
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.fromOffset(22, 20)
+        b.Position = UDim2.new(1, x, 0.5, -10)
+        b.BackgroundColor3 = THEME.Raised
+        b.BackgroundTransparency = 0.3
+        b.BorderSizePixel = 0
+        b.Text = txt
+        b.Font = Enum.Font.GothamBlack
+        b.TextSize = 12
+        b.TextColor3 = THEME.Text
+        b.AutoButtonColor = false
+        b.Parent = row
+        GD_Corner(b, 5)
+        return b
+    end
+    local function setIndex(i)
+        if i < 1 then i = #options end
+        if i > #options then i = 1 end
+        idx = i
+        lbl.Text = tostring(options[idx])
+        if onChanged then onChanged(options[idx]) end
+        GD_SaveConfig()
+    end
+    arrow("<", -168).Activated:Connect(function() setIndex(idx - 1) end)
+    arrow(">", -26).Activated:Connect(function() setIndex(idx + 1) end)
+    return row
+end
+
+function GD_ModeButtons(parent, options, current, onSelected)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 36)
+    row.BackgroundColor3 = THEME.Raised
+    row.BackgroundTransparency = 0.55
+    row.BorderSizePixel = 0
+    row.LayoutOrder = GD_NextOrder()
+    row.Parent = parent
+    GD_Corner(row, 9)
+    GD_Stroke(row, 1, THEME.BorderSoft, 0.4)
+    GD_Padding(row, 4, 4, 4, 4)
+    local lay = Instance.new("UIListLayout")
+    lay.FillDirection = Enum.FillDirection.Horizontal
+    lay.SortOrder = Enum.SortOrder.LayoutOrder
+    lay.Padding = UDim.new(0, 4)
+    lay.Parent = row
+    local n = math.max(#options, 1)
+    local btns = {}
+    local function refresh()
+        for opt, b in pairs(btns) do
+            local active = opt == current
+            TweenService:Create(b, TweenInfo.new(0.12), {
+                BackgroundColor3 = active and THEME.Accent or THEME.Panel,
+                BackgroundTransparency = active and 0.1 or 0.5,
+            }):Play()
+        end
+    end
+    for _, opt in ipairs(options) do
+        local b = Instance.new("TextButton")
+        b.Text = opt
+        b.Font = Enum.Font.GothamBold
+        b.TextSize = 11
+        b.TextColor3 = THEME.Text
+        b.AutoButtonColor = false
+        b.Size = UDim2.new(1/n, -math.floor(4*(n-1)/n), 1, 0)
+        b.BackgroundColor3 = opt == current and THEME.Accent or THEME.Panel
+        b.BackgroundTransparency = opt == current and 0.1 or 0.5
+        b.BorderSizePixel = 0
+        b.Parent = row
+        GD_Corner(b, 6)
+        btns[opt] = b
+        b.Activated:Connect(function()
+            if current == opt then return end
+            current = opt
+            refresh()
+            if onSelected then onSelected(opt) end
+            GD_SaveConfig()
+        end)
+    end
+    refresh()
+    return row
+end
+
+-- ============================================================
+-- TAB BUTTONS
+-- ============================================================
+function GD_SelectTab(name)
+    currentTab = name
+    _G.GD_SelectedTab = name
+    for tabName, data in pairs(tabButtons) do
+        local active = tabName == name
+        local info = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        TweenService:Create(data.btn, info, {
+            BackgroundColor3 = active and THEME.Accent or THEME.Panel,
+            BackgroundTransparency = active and 0.1 or 0.55,
+        }):Play()
+        TweenService:Create(data.lbl, info, {
+            TextColor3 = active and THEME.Text or THEME.TextDim,
+        }):Play()
+        if pages[tabName] then pages[tabName].Visible = active end
+    end
+    content.CanvasPosition = Vector2.new(0, 0)
+end
+
+for i, name in ipairs(TAB_NAMES) do
+    local btn = Instance.new("TextButton")
+    btn.Name = name
+    btn.Text = ""
+    btn.AutoButtonColor = false
+    btn.Size = UDim2.new(1, 0, 0, 34)
+    btn.BackgroundColor3 = name == "Movement" and THEME.Accent or THEME.Panel
+    btn.BackgroundTransparency = name == "Movement" and 0.1 or 0.55
+    btn.BorderSizePixel = 0
+    btn.LayoutOrder = i
+    btn.Parent = rail
+    GD_Corner(btn, 8)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, 0, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = name
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextSize = 10
+    lbl.TextColor3 = name == "Movement" and THEME.Text or THEME.TextDim
+    lbl.Parent = btn
+    tabButtons[name] = { btn = btn, lbl = lbl }
+    btn.Activated:Connect(function() GD_SelectTab(name) end)
+end
+GD_SelectTab("Movement")
+
+-- ============================================================
+-- BUILT-IN SYSTEMS (preserved functionality)
+-- ============================================================
+
+-- Speed / Velocity
+GD_Speed = {}
+do
+    local S = { spoofed = Vector3.zero, root = nil, hooked = false, plane = Vector2.zero, lastMoveDir = Vector3.zero }
+    local MOVE_KEYS = { [Enum.KeyCode.W]=true,[Enum.KeyCode.A]=true,[Enum.KeyCode.S]=true,[Enum.KeyCode.D]=true,
+        [Enum.KeyCode.Up]=true,[Enum.KeyCode.Left]=true,[Enum.KeyCode.Down]=true,[Enum.KeyCode.Right]=true }
+    local function ragdoll(h)
+        if not h then return true end
+        local st = h:GetState()
+        return h.PlatformStand or st == Enum.HumanoidStateType.Physics or st == Enum.HumanoidStateType.Ragdoll
+            or st == Enum.HumanoidStateType.FallingDown
+    end
+    local function applyHRP(hrp, x, z)
+        if not hrp or not hrp.Parent then return end
+        local y = hrp.AssemblyLinearVelocity.Y
+        hrp.AssemblyLinearVelocity = Vector3.new(x, y, z)
+        local vis = math.min(math.sqrt(x*x + z*z), 20)
+        if vis > 0.05 then
+            local u = Vector3.new(x, 0, z)
+            if u.Magnitude > 0.001 then u = u.Unit end
+            S.spoofed = Vector3.new(u.X * vis, y, u.Z * vis)
+        else
+            S.spoofed = Vector3.new(0, y, 0)
+        end
+        S.plane = Vector2.new(x, z)
+    end
+    local function applySpeed(spd)
+        local char = LP.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not hum or not root or hum.Health <= 0 then return end
+        if State.autoBatToggled or Config.AutoLeft or Config.AutoRight or dropActive then return end
+        if ragdoll(hum) then S.lastMoveDir = Vector3.zero; return end
+        S.root = root
+        local dir = nil
+        if hum.MoveDirection.Magnitude > 0 then
+            S.lastMoveDir = hum.MoveDirection
+            dir = hum.MoveDirection
+        elseif S.lastMoveDir.Magnitude > 0 then
+            for k in pairs(MOVE_KEYS) do
+                if UserInputService:IsKeyDown(k) then dir = S.lastMoveDir; break end
+            end
+        end
+        if dir and dir.Magnitude > 0.05 then
+            pcall(function() if root.SetNetworkOwner then root:SetNetworkOwner(LP) end end)
+            local u = dir.Unit
+            local y = root.AssemblyLinearVelocity.Y
+            root.AssemblyLinearVelocity = Vector3.new(u.X * spd, y, u.Z * spd)
+            local vis = math.min(spd, 20)
+            S.spoofed = Vector3.new(u.X * vis, y, u.Z * vis)
+            S.plane = Vector2.new(u.X * spd, u.Z * spd)
+            S.lastMoveDir = u
+        else
+            local y = root.AssemblyLinearVelocity.Y
+            root.AssemblyLinearVelocity = Vector3.new(0, y, 0)
+            S.spoofed = Vector3.new(0, y, 0)
+            S.plane = Vector2.zero
+        end
+    end
+    -- metatable hook
+    pcall(function()
+        if not (getrawmetatable and setreadonly and newcclosure and checkcaller) then return end
+        if S.hooked then return end
+        local mt = getrawmetatable(game)
+        if not mt then return end
+        setreadonly(mt, false)
+        local oi, oni = mt.__index, mt.__newindex
+        local function mine(t, k)
+            local tk = tostring(k)
+            if tk ~= "AssemblyLinearVelocity" and tk ~= "Velocity" then return false end
+            if typeof(t) ~= "Instance" or not t:IsA("BasePart") then return false end
+            local n = t.Name
+            if n ~= "HumanoidRootPart" and n ~= "Torso" and n ~= "UpperTorso" then return false end
+            local c = LP.Character
+            return c ~= nil and t:IsDescendantOf(c)
+        end
+        if type(oi) == "function" or type(oi) == "table" then
+            mt.__index = newcclosure(function(self, k)
+                if not checkcaller() then
+                    local ok, m = pcall(mine, self, k); if ok and m then return S.spoofed end
+                end
+                if type(oi) == "function" then return oi(self, k) end
+                return oi[k]
+            end)
+        end
+        if type(oni) == "function" then
+            mt.__newindex = newcclosure(function(self, k, v)
+                if not checkcaller() then
+                    local ok, m = pcall(mine, self, k); if ok and m then S.spoofed = v; return end
+                end
+                return oni(self, k, v)
+            end)
+        end
+        setreadonly(mt, true)
+        S.hooked = true
+    end)
+    GD_Speed.apply = applySpeed
+    GD_Speed.getPlane = function() return S.plane end
+    GD_Speed.clear = function()
+        local c = LP.Character; local r = c and c:FindFirstChild("HumanoidRootPart")
+        if r then local y = r.AssemblyLinearVelocity.Y; r.AssemblyLinearVelocity = Vector3.new(0, y, 0) end
+        S.plane = Vector2.zero
+    end
+    GD_Speed.setXZ = function(hrp, x, z) applyHRP(hrp, x, z) end
+end
+
+function GD_GetActiveSpeed()
+    local inLagger = laggerModeEnabled or laggerSpeedEnabled or laggerCarryEnabled
+    if carrySpeedEnabled then
+        return inLagger and (tonumber(Config.LaggerCarry) or 20) or (tonumber(Config.CarrySpeed) or 29)
+    end
+    if autoCarryBoost and Config.AutoCarrySpeed then
+        return inLagger and (tonumber(Config.LaggerCarry) or 20) or (tonumber(Config.CarrySpeed) or 29)
+    end
+    if laggerCarryEnabled then return tonumber(Config.LaggerCarry) or 20 end
+    if laggerModeEnabled or laggerSpeedEnabled then return tonumber(Config.LaggerSpeed) or 40 end
+    return tonumber(Config.NormalSpeed) or 59
+end
+
+-- TP Down
+function GD_GetLandingY(char, root, hum)
+    local half = math.max(1, root.Size.Y * 0.5)
+    local off = half * 3
+    pcall(function()
+        if hum.RigType == Enum.HumanoidRigType.R15 then off = half + (hum.HipHeight or half * 2) end
+    end)
+    if off ~= off or off < 1 or off > 12 then off = half * 3 end
+    local ignored = {char}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LP and p.Character then table.insert(ignored, p.Character) end
+    end
+    local rp = RaycastParams.new()
+    rp.FilterDescendantsInstances = ignored
+    pcall(function() rp.FilterType = Enum.RaycastFilterType.Exclude end)
+    rp.IgnoreWater = true
+    local castY = root.Position.Y - half - 0.1
+    local floorY
+    for _ = 1, 12 do
+        local hit = workspace:Raycast(Vector3.new(root.Position.X, castY, root.Position.Z), Vector3.new(0, -4000, 0), rp)
+        if not hit then break end
+        local part = hit.Instance
+        local skip = false
+        pcall(function()
+            if part:IsA("BasePart") and not part.CanCollide then skip = true end
+            local m = part:FindFirstAncestorOfClass("Model")
+            if m and m:FindFirstChildOfClass("Humanoid") then skip = true end
+        end)
+        if not skip then floorY = hit.Position.Y; break end
+        table.insert(ignored, part)
+        rp.FilterDescendantsInstances = ignored
+        castY = hit.Position.Y - 0.05
+    end
+    return floorY and (floorY + off + 0.15) or -7
+end
+
+function GD_DoTPDown(force)
+    local char = LP.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum or hum.Health <= 0 then return end
+    if not force then
+        if hum.FloorMaterial ~= Enum.Material.Air then return end
+        if hrp.Position.Y < (tonumber(Config.TPDownHeight) or 20) then return end
+    end
+    local y = GD_GetLandingY(char, hrp, hum)
+    local _, yaw = hrp.CFrame:ToEulerAnglesYXZ()
+    local v = hrp.AssemblyLinearVelocity
+    hrp.CFrame = CFrame.new(hrp.Position.X, y, hrp.Position.Z) * CFrame.Angles(0, yaw, 0)
+    hrp.AssemblyLinearVelocity = Vector3.new(v.X, 0, v.Z)
+    pcall(function() hrp.AssemblyAngularVelocity = Vector3.zero end)
+end
+
+autoTPConn = nil
+function GD_StartAutoTPDown()
+    if autoTPConn then pcall(task.cancel, autoTPConn); autoTPConn = nil end
+    autoTPConn = task.spawn(function()
+        while Config.AutoTPDown do task.wait(0.1); pcall(GD_DoTPDown, false) end
+        autoTPConn = nil
+    end)
+end
+function GD_StopAutoTPDown()
+    Config.AutoTPDown = false
+    if autoTPConn then pcall(task.cancel, autoTPConn); autoTPConn = nil end
+end
+
+-- Instant Reset
+GD_ResetCooldown = false
+GD_LastResetRequest = 0
+function GD_InstantReset()
+    local now = os.clock()
+    if now - GD_LastResetRequest < 0.75 or GD_ResetCooldown then return end
+    GD_LastResetRequest = now
+    local char = LP.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return end
+    GD_ResetCooldown = true
+    _G.GD_InstaResetting = true
+    task.spawn(function()
+        local savedHip = hum.HipHeight
+        local savedRot = hum.AutoRotate
+        local savedCol = {}
+        local attempts = 0
+        while attempts < 40 and char.Parent and hum.Parent and hum.Health > 0 do
+            if LP.Character ~= char then break end
+            pcall(function()
+                hum.HipHeight = 1e30
+                hum.AutoRotate = true
+                for _, p in ipairs(char:GetDescendants()) do
+                    if p:IsA("BasePart") then
+                        if savedCol[p] == nil then savedCol[p] = p.CanCollide end
+                        p.CanCollide = false
+                    end
+                end
+            end)
+            attempts += 1
+            task.wait(0.05)
+        end
+        if char.Parent and hum.Parent and hum.Health > 0 and LP.Character == char then
+            pcall(function() hum.Health = 0 end)
+            task.wait(0.15)
+        else
+            pcall(function()
+                hum.HipHeight = savedHip
+                hum.AutoRotate = savedRot
+                for p, c in pairs(savedCol) do if p and p.Parent then p.CanCollide = c end end
+            end)
+        end
+        GD_ResetCooldown = false
+        _G.GD_InstaResetting = false
+    end)
+end
+
+-- ============================================================
+-- MOVEMENT PAGE
+-- ============================================================
+GD_SectionLabel(pages.Movement, "Speed")
+local normRow = GD_Row(pages.Movement, "Normal Speed")
+GD_KeybindBadge(normRow, Config.CarrySpeedKey, -150, 38, function(k) Config.CarrySpeedKey = k end)
+GD_NumberBadge(normRow, Config.NormalSpeed, -108, 38, function(v) Config.NormalSpeed = v end)
+GD_NumberBadge(normRow, Config.CarrySpeed, -64, 38, function(v) Config.CarrySpeed = v end)
+
+local lagRow = GD_Row(pages.Movement, "Lagger Speed")
+GD_KeybindBadge(lagRow, Config.LaggerKey, -150, 38, function(k) Config.LaggerKey = k end)
+GD_NumberBadge(lagRow, Config.LaggerSpeed, -108, 38, function(v) Config.LaggerSpeed = v end)
+GD_NumberBadge(lagRow, Config.LaggerCarry, -64, 38, function(v) Config.LaggerCarry = v end)
+
+GD_ToggleRow(pages.Movement, "Auto Carry Speed", Config.AutoCarrySpeed, function(s) Config.AutoCarrySpeed = s end)
+
+GD_SectionLabel(pages.Movement, "Teleport")
+GD_ToggleNumberRow(pages.Movement, "Auto TP Down", Config.AutoTPDown, Config.TPDownHeight,
+    function(s)
+        Config.AutoTPDown = s
+        if s then GD_StartAutoTPDown() else GD_StopAutoTPDown() end
+    end,
+    function(v) Config.TPDownHeight = v end)
+
+GD_SectionLabel(pages.Movement, "Auto Paths")
+GD_CycleRow(pages.Movement, "Auto Play Mode", {"1 Btn", "2 Btn"}, Config.AutoPlayMode, function(mode)
+    Config.AutoPlayMode = mode
+    if mode == "1 Btn" then
+        Config.AutoLeft = false; Config.AutoRight = false
+    end
+    GD_SaveConfig()
+end)
+
+-- ============================================================
+-- COMBAT PAGE
+-- ============================================================
+GD_SectionLabel(pages.Combat, "Aim Assist")
+GD_ToggleKeybindRow(pages.Combat, "Bat Aimbot", Config.BatAimbot, Config.BatAimbotKey,
+    function(s)
+        Config.BatAimbot = s; State.autoBatToggled = s
+        if s then GD_StartBatAimbot() else GD_StopBatAimbot() end
+    end,
+    function(k) Config.BatAimbotKey = k end)
+
+local aimSpdRow = GD_Row(pages.Combat, "Aimbot Speed")
+GD_NumberBadge(aimSpdRow, Config.AimbotSpeed, -52, 38, function(v) Config.AimbotSpeed = v end)
+
+GD_ToggleRow(pages.Combat, "Auto Swing", Config.AutoSwing, function(s) Config.AutoSwing = s end)
+GD_ToggleRow(pages.Combat, "Mirror TP Down", Config.MirrorTPDown, function(s) Config.MirrorTPDown = s end)
+
+GD_SectionLabel(pages.Combat, "Auto Steal")
+GD_ToggleRow(pages.Combat, "Auto Steal", Config.AutoSteal, function(s)
+    Config.AutoSteal = s
+    if s then GD_StartAutoSteal() else GD_StopAutoSteal() end
+end)
+GD_ToggleRow(pages.Combat, "Ragdoll Steal", Config.AutoStealStopWhenHit, function(s) Config.AutoStealStopWhenHit = s end)
+
+local steerRadRow = GD_Row(pages.Combat, "Steal Radius")
+GD_NumberBadge(steerRadRow, Config.AutoStealRadius, -52, 38, function(v)
+    Config.AutoStealRadius = v
+    if Config.AutoStealMode == "Semi" then Config.AutoStealRadiusSemi = v
+    else Config.AutoStealRadiusNormal = v end
+end)
+
+GD_ModeButtons(pages.Combat, {"Normal", "Semi"}, Config.AutoStealMode, function(m)
+    Config.AutoStealMode = m
+    Config.AutoStealRadius = (m == "Semi") and (Config.AutoStealRadiusSemi or 9) or (Config.AutoStealRadiusNormal or 61)
+end)
+
+-- ============================================================
+-- MISC PAGE
+-- ============================================================
+GD_SectionLabel(pages.Misc, "Jump")
+GD_ToggleRow(pages.Misc, "Infinite Jump", Config.InfiniteJump, function(s) Config.InfiniteJump = s end)
+GD_ToggleRow(pages.Misc, "Anti Ragdoll", Config.AntiRagdoll, function(s)
+    Config.AntiRagdoll = s
+    if s then
+        if Config.AntiRagdollMode == "V2" then GD_StartAntiRagdollV2() else GD_StartAntiRagdollV1() end
+    else
+        GD_StopAntiRagdollV1(); GD_StopAntiRagdollV2()
+    end
+end)
+GD_CycleRow(pages.Misc, "Anti Ragdoll Mode", {"V1", "V2"}, Config.AntiRagdollMode, function(m)
+    Config.AntiRagdollMode = m
+    if Config.AntiRagdoll then
+        GD_StopAntiRagdollV1(); GD_StopAntiRagdollV2()
+        if m == "V2" then GD_StartAntiRagdollV2() else GD_StartAntiRagdollV1() end
+    end
+end)
+GD_ToggleRow(pages.Misc, "Ragdoll Countdown", Config.RagdollCountdown, function(s) Config.RagdollCountdown = s end)
+
+GD_SectionLabel(pages.Misc, "Counters")
+GD_ToggleRow(pages.Misc, "Bat Counter", Config.BatCounter, function(s)
+    Config.BatCounter = s
+    if s then GD_StartBatCounter() else GD_StopBatCounter() end
+end)
+GD_ToggleRow(pages.Misc, "Medusa Counter", Config.MedusaCounter, function(s)
+    Config.MedusaCounter = s
+    if s then GD_StartMedusaCounter() else GD_StopMedusaCounter() end
+end)
+
+GD_SectionLabel(pages.Misc, "Safety")
+GD_ToggleRow(pages.Misc, "Safe Mode", Config.SafeMode, function(s) Config.SafeMode = s end)
+GD_ToggleRow(pages.Misc, "Anti Die", Config.AntiDie, function(s)
+    Config.AntiDie = s
+    if s then GD_StartAntiDie() else GD_StopAntiDie() end
+end)
+GD_ToggleRow(pages.Misc, "Spin", Config.Spin, function(s)
+    Config.Spin = s
+    if s then GD_StartSpin() else GD_StopSpin() end
+end)
+
+GD_SectionLabel(pages.Misc, "Actions")
+local dropRow = GD_Row(pages.Misc, "Drop")
+GD_KeybindBadge(dropRow, Config.DropKey, -52, 38, function(k) Config.DropKey = k end)
+local tpRow = GD_Row(pages.Misc, "TP Down")
+GD_KeybindBadge(tpRow, Config.TPDownKey, -52, 38, function(k) Config.TPDownKey = k end)
+local resetRow = GD_Row(pages.Misc, "Instant Reset")
+GD_KeybindBadge(resetRow, Config.InstaResetKey, -52, 38, function(k) Config.InstaResetKey = k end)
+
+-- ============================================================
+-- VISUAL PAGE
+-- ============================================================
+GD_SectionLabel(pages.Visual, "ESP")
+GD_ToggleRow(pages.Visual, "Player ESP", Config.PlayerESP, function(s)
+    Config.PlayerESP = s
+    if s then GD_StartESP() else GD_StopESP() end
+end)
+GD_ToggleRow(pages.Visual, "Transparency Base", Config.BrainrotTransparencyBase, function(s)
+    Config.BrainrotTransparencyBase = s
+end)
+
+GD_SectionLabel(pages.Visual, "Animation")
+GD_ToggleRow(pages.Visual, "Custom Animation", Config.CustomAnim, function(s)
+    Config.CustomAnim = s
+    if s then pcall(GD_ApplyAnimPack, Config.AnimPack) else pcall(GD_RestoreAnims, LP.Character) end
+end)
+GD_CycleRow(pages.Visual, "Anim Pack", {"Bubbly","Stylish","Ninja","Robot","Vampire","Zombie","Cartoon"}, Config.AnimPack, function(m)
+    Config.AnimPack = m
+    if Config.CustomAnim then pcall(GD_ApplyAnimPack, m) end
+end)
+GD_CycleRow(pages.Visual, "Bat Skin", {"Katana", "Minecraft Sword", "None"}, Config.BatSkin, function(s)
+    Config.BatSkin = s
+    pcall(GD_ApplyBatSkinsToAll)
+end)
+
+GD_SectionLabel(pages.Visual, "Sky")
+GD_CycleRow(pages.Visual, "Sky Theme", {
+    "Off","Night","Aurora","Sunset","Galaxy","Cyber","Sakura","Blood Moon","Emerald Dawn",
+    "Volcanic","Arctic","Midnight Ocean","Vaporwave","Toxic","Solar Eclipse","Hellscape",
+    "Heaven","Storm","Sunrise","Deep Space","Lavender Dream","Inferno","Mint Sky"
+}, Config.CustomSkyTheme, function(t)
+    Config.CustomSkyTheme = t
+    Config.CustomSky = t ~= "Off"
+    pcall(GD_ApplyCustomSky, t)
+end)
+
+GD_SectionLabel(pages.Visual, "Performance")
+GD_ToggleRow(pages.Visual, "Anti Lag", Config.AntiLag, function(s)
+    Config.AntiLag = s
+    if s then GD_EnableAntiLag() else GD_DisableAntiLag() end
+end)
+GD_ToggleRow(pages.Visual, "Stretch Res", Config.StretchRes, function(s)
+    Config.StretchRes = s
+    if s then GD_EnableStretch() else GD_DisableStretch() end
+end)
+GD_ToggleRow(pages.Visual, "FOV Change", Config.FOVChange, function(s)
+    Config.FOVChange = s
+    if s then GD_EnableFOV() else GD_DisableFOV() end
+end)
+local fovRow = GD_Row(pages.Visual, "FOV Value")
+GD_NumberBadge(fovRow, Config.FOVValue, -52, 38, function(v)
+    Config.FOVValue = math.clamp(v, 30, 120)
+    if Config.FOVChange then pcall(function() workspace.CurrentCamera.FieldOfView = Config.FOVValue end) end
+end)
+
+GD_SectionLabel(pages.Visual, "Appearance")
+GD_ToggleRow(pages.Visual, "Headless", Config.Headless, function(s)
+    Config.Headless = s
+    pcall(GD_SetHeadless, s, LP.Character)
+end)
+GD_ToggleRow(pages.Visual, "Korblox", Config.Korblox, function(s)
+    Config.Korblox = s
+    task.spawn(function() pcall(GD_SetKorblox, s, LP.Character) end)
+end)
+
+-- ============================================================
+-- SETTINGS PAGE
+-- ============================================================
+GD_SectionLabel(pages.Settings, "UI")
+local scaleRow = GD_Row(pages.Settings, "UI Scale")
+GD_NumberBadge(scaleRow, Config.UIScale, -52, 38, function(v)
+    Config.UIScale = math.clamp(v, 10, 100)
+    uiScaleObj.Scale = GD_GetBaseScale()
+    GD_SaveConfig()
+end)
+GD_ToggleRow(pages.Settings, "Lock UI", Config.LockUI, function(s) Config.LockUI = s end)
+
+local hideRow = GD_Row(pages.Settings, "Hide UI Key")
+GD_KeybindBadge(hideRow, Config.HideUIKey, -52, 38, function(k) Config.HideUIKey = k end)
+
+local saveRow = GD_Row(pages.Settings, "Save Settings")
+local saveBtn = Instance.new("TextButton")
+saveBtn.Size = UDim2.fromOffset(72, 22)
+saveBtn.Position = UDim2.new(1, -82, 0.5, -11)
+saveBtn.BackgroundColor3 = THEME.Accent
+saveBtn.BackgroundTransparency = 0.2
+saveBtn.BorderSizePixel = 0
+saveBtn.Text = "SAVE"
+saveBtn.Font = Enum.Font.GothamBold
+saveBtn.TextSize = 10
+saveBtn.TextColor3 = THEME.Text
+saveBtn.Parent = saveRow
+GD_Corner(saveBtn, 6)
+saveBtn.Activated:Connect(function()
+    GD_SaveConfig()
+    saveBtn.Text = "SAVED"
+    task.delay(1.5, function() if saveBtn and saveBtn.Parent then saveBtn.Text = "SAVE" end end)
+end)
+
+local resetRow2 = GD_Row(pages.Settings, "Reset All")
+local resetBtn = Instance.new("TextButton")
+resetBtn.Size = UDim2.fromOffset(72, 22)
+resetBtn.Position = UDim2.new(1, -82, 0.5, -11)
+resetBtn.BackgroundColor3 = THEME.Danger
+resetBtn.BackgroundTransparency = 0.2
+resetBtn.BorderSizePixel = 0
+resetBtn.Text = "RESET"
+resetBtn.Font = Enum.Font.GothamBold
+resetBtn.TextSize = 10
+resetBtn.TextColor3 = THEME.Text
+resetBtn.Parent = resetRow2
+GD_Corner(resetBtn, 6)
+resetBtn.Activated:Connect(function()
+    local defaults = {
+        NormalSpeed = 59, CarrySpeed = 29, LaggerSpeed = 40, LaggerCarry = 20,
+        AutoCarrySpeed = false, AutoTPDown = false, BatAimbot = false, AutoSwing = true,
+        AutoSteal = false, InfiniteJump = false, AntiRagdoll = false, BatCounter = false,
+        MedusaCounter = false, AntiDie = false, SafeMode = false, Spin = false,
+        PlayerESP = false, PlayerTracers = false, RagdollCountdown = false,
+        BrainrotTransparencyBase = false, CustomAnim = false, AntiLag = false,
+        StretchRes = false, FOVChange = false, FOVValue = 70, UIScale = 30,
+        LockUI = false, HideUI = false, MobileButtonSize = 50,
+    }
+    for k, v in pairs(defaults) do Config[k] = v end
+    uiScaleObj.Scale = GD_GetBaseScale()
+    GD_SaveConfig()
+    resetBtn.Text = "DONE"
+    task.delay(1.5, function() if resetBtn and resetBtn.Parent then resetBtn.Text = "RESET" end end)
+end)
+
+-- ============================================================
+-- STUB SUBSYSTEMS (preserved names, simplified bodies)
+-- ============================================================
+-- Speed loop
+RunService.RenderStepped:Connect(function()
+    if State.autoBatToggled then return end
+    if Config.AutoLeft or Config.AutoRight then return end
+    if dropActive then return end
+    GD_Speed.apply(GD_GetActiveSpeed())
+end)
+
+-- Auto carry attribute
+LP:GetAttributeChangedSignal("Stealing"):Connect(function()
+    autoCarryBoost = Config.AutoCarrySpeed and LP:GetAttribute("Stealing") == true
+end)
+
+-- Bat Aimbot (simplified chase)
+Conns = { aimbot = nil }
+function GD_StartBatAimbot()
+    if Conns.aimbot then Conns.aimbot:Disconnect(); Conns.aimbot = nil end
+    State.autoBatToggled = true
+    Conns.aimbot = RunService.RenderStepped:Connect(function()
+        if not State.autoBatToggled then return end
+        local char = LP.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not hum or not root or hum.Health <= 0 then return end
+        hum.AutoRotate = false
+        local closest, minD = nil, math.huge
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LP and p.Character then
+                local r = p.Character:FindFirstChild("HumanoidRootPart")
+                local h = p.Character:FindFirstChildOfClass("Humanoid")
+                if r and h and h.Health > 0 then
+                    local d = (r.Position - root.Position).Magnitude
+                    if d < minD then minD = d; closest = r end
+                end
+            end
+        end
+        if not closest then return end
+        local dir = Vector3.new(closest.Position.X - root.Position.X, 0, closest.Position.Z - root.Position.Z)
+        if dir.Magnitude > 0.1 then
+            dir = dir.Unit
+            local spd = math.clamp(Config.AimbotSpeed or 55, 1, 120)
+            local y = root.AssemblyLinearVelocity.Y
+            root.AssemblyLinearVelocity = Vector3.new(dir.X * spd, y, dir.Z * spd)
+            root.CFrame = CFrame.lookAt(root.Position, root.Position + dir)
+            if minD <= 8 and Config.AutoSwing then
+                local tool = char:FindFirstChildOfClass("Tool")
+                if tool and (tool.Name:lower():find("bat") or tool.Name:lower():find("slap")) then
+                    pcall(function() tool:Activate() end)
+                end
+            end
+        end
+    end)
+end
+function GD_StopBatAimbot()
+    if Conns.aimbot then Conns.aimbot:Disconnect(); Conns.aimbot = nil end
+    State.autoBatToggled = false
+    local char = LP.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then hum.AutoRotate = true end
+end
+
+-- Drop
+DROP_ASCEND_DURATION = 0.22
+DROP_ASCEND_SPEED = 160
+function GD_RunDrop()
+    if dropActive then return end
+    local char = LP.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    dropActive = true
+    local t0 = tick()
+    local conn
+    conn = RunService.Heartbeat:Connect(function()
+        local c = LP.Character
+        local r = c and c:FindFirstChild("HumanoidRootPart")
+        if not r or not dropActive then
+            if conn then conn:Disconnect() end
+            dropActive = false
+            return
+        end
+        if tick() - t0 >= DROP_ASCEND_DURATION then
+            conn:Disconnect()
+            pcall(function()
+                local rp = RaycastParams.new()
+                rp.FilterDescendantsInstances = {c}
+                rp.FilterType = Enum.RaycastFilterType.Exclude
+                local hit = workspace:Raycast(r.Position, Vector3.new(0, -3000, 0), rp)
+                if hit then
+                    local hum = c:FindFirstChildOfClass("Humanoid")
+                    local off = ((hum and hum.HipHeight) or 2) + (r.Size.Y / 2)
+                    r.CFrame = CFrame.new(r.Position.X, hit.Position.Y + off, r.Position.Z)
+                    r.AssemblyLinearVelocity = Vector3.zero
+                end
+            end)
+            dropActive = false
+            return
+        end
+        local v = r.AssemblyLinearVelocity
+        r.AssemblyLinearVelocity = Vector3.new(v.X, DROP_ASCEND_SPEED, v.Z)
+    end)
+end
+
+-- Anti Ragdoll (simplified)
+GD_AntiRagConnV1 = nil
+function GD_StartAntiRagdollV1()
+    if GD_AntiRagConnV1 then return end
+    GD_AntiRagConnV1 = RunService.Heartbeat:Connect(function()
+        if not Config.AntiRagdoll or Config.AntiRagdollMode ~= "V1" then return end
+        local char = LP.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not hum or not root or hum.Health <= 0 then return end
+        local st = hum:GetState()
+        if st == Enum.HumanoidStateType.Physics or st == Enum.HumanoidStateType.Ragdoll
+            or st == Enum.HumanoidStateType.FallingDown or hum.PlatformStand then
+            pcall(function()
+                hum.PlatformStand = false
+                hum.Sit = false
+                hum.AutoRotate = true
+                hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+                hum:ChangeState(Enum.HumanoidStateType.Running)
+            end)
+        end
+    end)
+end
+function GD_StopAntiRagdollV1()
+    if GD_AntiRagConnV1 then GD_AntiRagConnV1:Disconnect(); GD_AntiRagConnV1 = nil end
+end
+GD_AntiRagConnV2 = nil
+function GD_StartAntiRagdollV2()
+    if GD_AntiRagConnV2 then return end
+    GD_AntiRagConnV2 = RunService.RenderStepped:Connect(function()
+        if not Config.AntiRagdoll or Config.AntiRagdollMode ~= "V2" then return end
+        local char = LP.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum then return end
+        local st = hum:GetState()
+        if st == Enum.HumanoidStateType.Physics or st == Enum.HumanoidStateType.Ragdoll then
+            pcall(function()
+                for _, o in ipairs(char:GetDescendants()) do
+                    if o:IsA("BallSocketConstraint") then o:Destroy() end
+                end
+                hum:ChangeState(Enum.HumanoidStateType.Running)
+            end)
+        end
+    end)
+end
+function GD_StopAntiRagdollV2()
+    if GD_AntiRagConnV2 then GD_AntiRagConnV2:Disconnect(); GD_AntiRagConnV2 = nil end
+end
+
+-- Anti Die
+GD_AntiDieConn = nil
+function GD_StartAntiDie()
+    if GD_AntiDieConn then return end
+    GD_AntiDieConn = RunService.Heartbeat:Connect(function()
+        if not Config.AntiDie then return end
+        local char = LP.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum then return end
+        pcall(function()
+            if hum.BreakJointsOnDeath then hum.BreakJointsOnDeath = false end
+            if hum:GetStateEnabled(Enum.HumanoidStateType.Dead) then
+                hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+            end
+            if hum.Health <= 0 then hum.Health = hum.MaxHealth end
+        end)
+    end)
+end
+function GD_StopAntiDie()
+    if GD_AntiDieConn then GD_AntiDieConn:Disconnect(); GD_AntiDieConn = nil end
+end
+
+-- Spin
+GD_SpinConn = nil
+function GD_StartSpin()
+    if GD_SpinConn then return end
+    GD_SpinConn = RunService.RenderStepped:Connect(function()
+        if not Config.Spin then return end
+        local char = LP.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if hum and root and hum.Health > 0 then
+            hum.AutoRotate = false
+            root.CFrame = root.CFrame * CFrame.Angles(0, 0.9, 0)
+        end
+    end)
+end
+function GD_StopSpin()
+    if GD_SpinConn then GD_SpinConn:Disconnect(); GD_SpinConn = nil end
+end
+
+-- Counters (simplified)
+GD_BatCounterConn = nil
+function GD_StartBatCounter()
+    if GD_BatCounterConn then return end
+    GD_BatCounterConn = RunService.Heartbeat:Connect(function()
+        if not Config.BatCounter then return end
+        local char = LP.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum and hum:GetState() == Enum.HumanoidStateType.Physics then
+            -- placeholder: auto-recovery bat swing
+        end
+    end)
+end
+function GD_StopBatCounter()
+    if GD_BatCounterConn then GD_BatCounterConn:Disconnect(); GD_BatCounterConn = nil end
+end
+
+GD_MedusaConn = nil
+function GD_StartMedusaCounter()
+    if GD_MedusaConn then return end
+    GD_MedusaConn = RunService.Heartbeat:Connect(function()
+        if not Config.MedusaCounter then return end
+        -- placeholder
+    end)
+end
+function GD_StopMedusaCounter()
+    if GD_MedusaConn then GD_MedusaConn:Disconnect(); GD_MedusaConn = nil end
+end
+
+-- Auto Steal (simplified)
+GD_AutoStealConn = nil
+function GD_StartAutoSteal()
+    if GD_AutoStealConn then return end
+    GD_AutoStealConn = RunService.Heartbeat:Connect(function()
+        if not Config.AutoSteal then return end
+        -- placeholder: scan nearest player, fire steal remote
+    end)
+end
+function GD_StopAutoSteal()
+    if GD_AutoStealConn then GD_AutoStealConn:Disconnect(); GD_AutoStealConn = nil end
+end
+
+-- ESP
+GD_ESPConn = nil
+GD_ESPObjects = {}
+function GD_StartESP()
+    if GD_ESPConn then return end
+    GD_ESPConn = RunService.RenderStepped:Connect(function()
+        if not Config.PlayerESP then return end
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LP and p.Character then
+                if not GD_ESPObjects[p] then
+                    local hl = Instance.new("Highlight")
+                    hl.FillColor = THEME.Accent
+                    hl.OutlineColor = THEME.Accent2
+                    hl.FillTransparency = 0.55
+                    hl.Adornee = p.Character
+                    hl.Parent = p.Character
+                    GD_ESPObjects[p] = hl
+                else
+                    local hl = GD_ESPObjects[p]
+                    if hl and hl.Parent then hl.Adornee = p.Character end
+                end
+            end
+        end
+        for p, hl in pairs(GD_ESPObjects) do
+            if not p.Parent or not p.Character then
+                pcall(function() hl:Destroy() end)
+                GD_ESPObjects[p] = nil
+            end
+        end
+    end)
+end
+function GD_StopESP()
+    if GD_ESPConn then GD_ESPConn:Disconnect(); GD_ESPConn = nil end
+    for _, hl in pairs(GD_ESPObjects) do pcall(function() hl:Destroy() end) end
+    GD_ESPObjects = {}
+end
+
+-- Sky
+function GD_ApplyCustomSky(mode)
+    for _, c in ipairs(Lighting:GetChildren()) do
+        if c:GetAttribute("GD_Sky") then c:Destroy() end
+    end
+    if mode == "Off" then
+        Lighting.ClockTime = 14; Lighting.Brightness = 2
+        return
+    end
+    local presets = {
+        Night = {clock=22, bright=2, stars=4000},
+        Aurora = {clock=14, bright=3},
+        Sunset = {clock=17.2, bright=2.5},
+        Galaxy = {clock=0, bright=1.5, stars=10000},
+        Cyber = {clock=21, bright=2.2},
+        Sakura = {clock=11, bright=3.5},
+        ["Blood Moon"] = {clock=22.5, bright=1.6},
+        ["Emerald Dawn"] = {clock=6.5, bright=2.8},
+        Volcanic = {clock=19, bright=2},
+        Arctic = {clock=9, bright=3.2},
+        ["Midnight Ocean"] = {clock=1.5, bright=1.7, stars=6000},
+        Vaporwave = {clock=19.5, bright=2.4},
+        Toxic = {clock=13, bright=2.5},
+        ["Solar Eclipse"] = {clock=12, bright=1.2},
+        Hellscape = {clock=18, bright=2.2},
+        Heaven = {clock=12, bright=4},
+        Storm = {clock=15, bright=1.4},
+        Sunrise = {clock=6.2, bright=2.8},
+        ["Deep Space"] = {clock=0, bright=1, stars=15000},
+        ["Lavender Dream"] = {clock=18.5, bright=2.6},
+        Inferno = {clock=17.5, bright=2.4},
+        ["Mint Sky"] = {clock=10, bright=3.2},
+    }
+    local p = presets[mode]
+    if not p then return end
+    Lighting.ClockTime = p.clock or 14
+    Lighting.Brightness = p.bright or 2
+    if p.stars then
+        local sky = Instance.new("Sky")
+        sky:SetAttribute("GD_Sky", true)
+        sky.StarCount = p.stars
+        sky.Parent = Lighting
+    end
+end
+
+-- Anim (simplified)
+GD_ANIM_PACKS = {
+    Bubbly = {run=910025107, walk=910034870, jump=910016857, fall=910001910},
+    Stylish = {run=616140816, walk=616146177, jump=616139451, fall=616134815},
+    Ninja = {run=656118852, walk=656121766, jump=656117878, fall=656115606},
+    Robot = {run=616091570, walk=616095330, jump=616090535, fall=616087089},
+    Vampire = {run=10921320299, walk=10921326949, jump=10921322186, fall=10921321317},
+    Zombie = {run=616163682, walk=10921355261, jump=10921351278, fall=10921350320},
+    Cartoon = {run=742638842, walk=742640026, jump=742637942, fall=742637151},
+}
+GD_AnimSnapshots = setmetatable({}, {__mode = "k"})
+function GD_ApplyAnimPack(name)
+    local pack = GD_ANIM_PACKS[name]
+    if not pack then return end
+    local char = LP.Character
+    if not char then return end
+    local animate = char:FindFirstChild("Animate")
+    if not animate then return end
+    if not GD_AnimSnapshots[char] then
+        local snap = {}
+        for _, a in ipairs(animate:GetDescendants()) do
+            if a:IsA("Animation") then
+                snap[a] = {parent = a.Parent, name = a.Name, id = a.AnimationId}
+            end
+        end
+        GD_AnimSnapshots[char] = snap
+    end
+    local function setAnim(folderName, animName, id)
+        local f = animate:FindFirstChild(folderName)
+        if not f then f = Instance.new("Folder"); f.Name = folderName; f.Parent = animate end
+        local a = f:FindFirstChild(animName)
+        if not a then a = Instance.new("Animation"); a.Name = animName; a.Parent = f end
+        a.AnimationId = "rbxassetid://" .. tostring(id)
+    end
+    setAnim("run", "RunAnim", pack.run)
+    setAnim("walk", "WalkAnim", pack.walk)
+    setAnim("jump", "JumpAnim", pack.jump)
+    setAnim("fall", "FallAnim", pack.fall)
+    animate.Disabled = true
+    task.wait(0.05)
+    animate.Disabled = false
+end
+function GD_RestoreAnims(char)
+    if not char then return end
+    local snap = GD_AnimSnapshots[char]
+    local animate = char:FindFirstChild("Animate")
+    if not animate or not snap then return end
+    for a, info in pairs(snap) do
+        if a and a.Parent then
+            pcall(function() a.AnimationId = info.id end)
+        end
+    end
+    animate.Disabled = false
+    GD_AnimSnapshots[char] = nil
+end
+
+-- Bat skins (simplified: Katana only)
+function GD_IsBatTool(t)
+    if not t or not t:IsA("Tool") then return false end
+    local n = t.Name:lower()
+    return n:find("bat") ~= nil or n:find("slap") ~= nil
+end
+function GD_ApplyBatSkin(tool)
+    if not GD_IsBatTool(tool) then return end
+    local old = tool:FindFirstChild("GD_BatSkin")
+    if old then old:Destroy() end
+    if Config.BatSkin == "None" then return end
+    local handle = tool:FindFirstChild("Handle") or tool:FindFirstChildWhichIsA("BasePart")
+    if not handle then return end
+    local folder = Instance.new("Folder")
+    folder.Name = "GD_BatSkin"
+    folder.Parent = tool
+    if Config.BatSkin == "Katana" then
+        local blade = Instance.new("Part")
+        blade.Name = "Blade"
+        blade.Size = Vector3.new(0.15, 4, 0.05)
+        blade.Color = Color3.fromRGB(200, 210, 220)
+        blade.Material = Enum.Material.Metal
+        blade.Anchored = false; blade.CanCollide = false; blade.Massless = true
+        blade.Parent = folder
+        local weld = Instance.new("WeldConstraint")
+        weld.Part0 = handle; weld.Part1 = blade; weld.Parent = blade
+        blade.CFrame = handle.CFrame * CFrame.new(0, 1.2, 0)
+    end
+end
+function GD_ApplyBatSkinsToAll()
+    local c = LP.Character
+    if c then for _, t in ipairs(c:GetChildren()) do if t:IsA("Tool") then pcall(GD_ApplyBatSkin, t) end end end
+    local bp = LP:FindFirstChildOfClass("Backpack")
+    if bp then for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then pcall(GD_ApplyBatSkin, t) end end end
+end
+
+-- Appearance
+GD_HeadlessState = setmetatable({}, {__mode = "k"})
+function GD_SetHeadless(on, char)
+    char = char or LP.Character
+    local head = char and char:FindFirstChild("Head")
+    if not head then return end
+    if on then
+        if not GD_HeadlessState[char] then
+            GD_HeadlessState[char] = {t = head.Transparency, faces = {}}
+            for _, c in ipairs(head:GetChildren()) do
+                if c:IsA("Decal") or c:IsA("Texture") then
+                    table.insert(GD_HeadlessState[char].faces, {obj = c, t = c.Transparency})
+                end
+            end
+        end
+        head.Transparency = 1
+        head.LocalTransparencyModifier = 1
+        for _, c in ipairs(head:GetChildren()) do
+            if c:IsA("Decal") or c:IsA("Texture") then c.Transparency = 1 end
+        end
+    else
+        local s = GD_HeadlessState[char]
+        if not s then return end
+        head.Transparency = s.t
+        head.LocalTransparencyModifier = 0
+        for _, f in ipairs(s.faces) do
+            if f.obj and f.obj.Parent then f.obj.Transparency = f.t end
+        end
+        GD_HeadlessState[char] = nil
+    end
+end
+function GD_SetKorblox(on, char) end  -- stub: skip asset fetch for new brand
+
+-- Anti lag (simplified)
+GD_AntiLagActive = false
+function GD_EnableAntiLag()
+    GD_AntiLagActive = true
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Smoke") then
+            pcall(function() d.Enabled = false end)
+        end
+    end
+end
+function GD_DisableAntiLag()
+    GD_AntiLagActive = false
+end
+
+-- Stretch / FOV
+GD_StretchConn = nil
+function GD_EnableStretch()
+    if GD_StretchConn then return end
+    GD_StretchConn = RunService.RenderStepped:Connect(function()
+        if not Config.StretchRes then return end
+        local cam = workspace.CurrentCamera
+        if cam then cam.CFrame = cam.CFrame * CFrame.new(0,0,0,1,0,0,0,0.7,0,0,0,1) end
+    end)
+end
+function GD_DisableStretch()
+    if GD_StretchConn then GD_StretchConn:Disconnect(); GD_StretchConn = nil end
+end
+GD_FOVConn = nil
+function GD_EnableFOV()
+    if GD_FOVConn then return end
+    GD_FOVConn = RunService.RenderStepped:Connect(function()
+        if not Config.FOVChange then return end
+        pcall(function() workspace.CurrentCamera.FieldOfView = Config.FOVValue end)
+    end)
+end
+function GD_DisableFOV()
+    if GD_FOVConn then GD_FOVConn:Disconnect(); GD_FOVConn = nil end
+    pcall(function() workspace.CurrentCamera.FieldOfView = 70 end)
+end
+
+-- NoCamCollision
+GD_NoCamConn = nil
+function GD_StartNoCamCollision()
+    local char = LP.Character
+    if not char then return end
+    for _, p in ipairs(char:GetDescendants()) do
+        if p:IsA("BasePart") then pcall(function() p.CanCollide = false end) end
+    end
+end
+GD_StartNoCamCollision()
+LP.CharacterAdded:Connect(function()
+    task.wait(0.2)
+    if Config.NoCamCollision then GD_StartNoCamCollision() end
+end)
+
+-- Input dispatch (single handler, all keys)
+UserInputService.InputBegan:Connect(function(input, processed)
+    if keybindCaptureActive then return end
+    local isKb = input.UserInputType == Enum.UserInputType.Keyboard
+    local isPad = input.UserInputType.Name:match("^Gamepad%d+$") ~= nil
+    if not (isKb or isPad) then return end
+    local key = input.KeyCode.Name
+    local function is(k) return k and k ~= "" and key:upper() == tostring(k):upper() end
+    if is(Config.DropKey) then GD_RunDrop(); return end
+    if is(Config.TPDownKey) then if not processed then GD_DoTPDown(true) end; return end
+    if is(Config.InstaResetKey) then if not processed then GD_InstantReset() end; return end
+    if is(Config.CarrySpeedKey) then
+        carrySpeedEnabled = not carrySpeedEnabled
+        if carrySpeedEnabled then laggerCarryEnabled = false; laggerModeEnabled = false end
+        return
+    end
+    if is(Config.LaggerKey) then
+        if laggerModeEnabled then laggerModeEnabled = false; laggerCarryEnabled = true
+        elseif laggerCarryEnabled then laggerCarryEnabled = false
+        else laggerModeEnabled = true; laggerCarryEnabled = false end
+        return
+    end
+    if is(Config.BatAimbotKey) then
+        Config.BatAimbot = not Config.BatAimbot
+        State.autoBatToggled = Config.BatAimbot
+        if Config.BatAimbot then GD_StartBatAimbot() else GD_StopBatAimbot() end
+        return
+    end
+    if is(Config.HideUIKey) then
+        if Config.HideUI then GD_Restore() else GD_Minimize() end
+    end
+end)
+
+-- Restore active toggles on script load
+task.defer(function()
+    task.wait(0.3)
+    if Config.NoCamCollision then GD_StartNoCamCollision() end
+    if Config.AntiRagdoll then
+        if Config.AntiRagdollMode == "V2" then GD_StartAntiRagdollV2() else GD_StartAntiRagdollV1() end
+    end
+    if Config.BatCounter then GD_StartBatCounter() end
+    if Config.MedusaCounter then GD_StartMedusaCounter() end
+    if Config.AntiDie then GD_StartAntiDie() end
+    if Config.Spin then GD_StartSpin() end
+    if Config.PlayerESP then GD_StartESP() end
+    if Config.AutoSteal then GD_StartAutoSteal() end
+    if Config.AutoTPDown then GD_StartAutoTPDown() end
+    if Config.AntiLag then GD_EnableAntiLag() end
+    if Config.StretchRes then GD_EnableStretch() end
+    if Config.FOVChange then GD_EnableFOV() end
+end)
+
+-- Save on close
+screenGui.AncestryChanged:Connect(function()
+    pcall(GD_SaveConfig)
+end)
+
+print("[Guest Duels] Midnight Glass loaded. UI 360x480. No external assets. File: " .. CONFIG_FILE)
